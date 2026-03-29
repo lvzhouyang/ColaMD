@@ -41,7 +41,7 @@ linux:
     - AppImage
     - deb
   category: Office
-  icon: resources
+  icon: resources/icon.png
 
 nsis:
   oneClick: false
