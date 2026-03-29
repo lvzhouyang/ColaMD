@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Elegant warm background -->
+  <rect x="4" y="4" width="504" height="504" rx="106" fill="#f0edea" stroke="#d8d3ce" stroke-width="2"/>
+  <!-- CMD text, elegant red, serif, centered -->
+  <text x="256" y="256" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="168" fill="#c44b2b">CMD</text>
+</svg>
