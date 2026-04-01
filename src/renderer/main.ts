@@ -32,6 +32,8 @@ interface AgentChangeEntry {
   targetText: string | null
 }
 
+type SyncState = 'clean' | 'dirty' | 'conflict'
+
 const MAX_AGENT_CHANGES = 5
 
 function formatRelativeTime(timestamp: number): string {
@@ -160,15 +162,35 @@ function analyzeAgentChange(previous: string, next: string): { summary: string; 
   }
 }
 
+function buildConflictDetails(localMarkdown: string, externalMarkdown: string): string {
+  const previousLines = localMarkdown.split('\n').map(normalizeLine).filter(Boolean)
+  const nextLines = externalMarkdown.split('\n').map(normalizeLine).filter(Boolean)
+  const { added, removed } = collectLineDiff(previousLines, nextLines)
+  const localHeading = findHeadingContext(previousLines, previousLines.length - 1)
+  const externalHeading = findHeadingContext(nextLines, findFirstChangedLineIndex(previousLines, nextLines))
+
+  const parts: string[] = []
+  if (externalHeading) parts.push(`Agent changed: ${externalHeading}`)
+  if (localHeading && localHeading !== externalHeading) parts.push(`Your current context: ${localHeading}`)
+  if (added.length > 0) parts.push(`Agent added ${added.length} line${added.length === 1 ? '' : 's'}`)
+  if (removed.length > 0) parts.push(`Agent removed ${removed.length} line${removed.length === 1 ? '' : 's'}`)
+  if (added[0]) parts.push(`Example from agent version: ${added[0].slice(0, 140)}`)
+  return parts.join('\n')
+}
+
 async function init(): Promise<void> {
   const api = window.electronAPI
   let currentMarkdown = ''
+  let lastSyncedMarkdown = ''
+  let pendingExternalMarkdown: string | null = null
+  let syncState: SyncState = 'clean'
   let editorReady = false
   let pendingOpenedContent: string | null = null
   const pendingErrors: string[] = []
   let getMarkdown = () => ''
   let getHTML = () => ''
   let setMarkdown = (_content: string, _showDiff?: boolean) => {}
+  let applyingProgrammaticUpdate = false
   let agentState: 'idle' | 'active' | 'cooldown' = 'idle'
   let lastAgentUpdateAt: number | null = null
   let agentUpdateCount = 0
@@ -182,6 +204,44 @@ async function init(): Promise<void> {
   const agentPanelToggle = document.getElementById('agent-panel-toggle') as HTMLButtonElement | null
   const agentSummary = document.getElementById('agent-summary')
   const agentChangeList = document.getElementById('agent-change-list')
+  const syncBanner = document.getElementById('sync-banner')
+  const syncBannerSummary = document.getElementById('sync-banner-summary')
+  const syncBannerDetails = document.getElementById('sync-banner-details')
+  const syncKeepMine = document.getElementById('sync-keep-mine') as HTMLButtonElement | null
+  const syncLoadAgent = document.getElementById('sync-load-agent') as HTMLButtonElement | null
+  const syncReviewDiff = document.getElementById('sync-review-diff') as HTMLButtonElement | null
+
+  const updateSyncState = (): void => {
+    if (pendingExternalMarkdown !== null) {
+      syncState = 'conflict'
+      return
+    }
+    syncState = currentMarkdown === lastSyncedMarkdown ? 'clean' : 'dirty'
+  }
+
+  const renderSyncBanner = (): void => {
+    if (!syncBanner || !syncBannerSummary || !syncBannerDetails || !syncReviewDiff) return
+    if (syncState !== 'conflict' || pendingExternalMarkdown === null) {
+      syncBanner.hidden = true
+      syncBannerDetails.hidden = true
+      syncReviewDiff.setAttribute('aria-expanded', 'false')
+      return
+    }
+
+    syncBanner.hidden = false
+    syncBannerSummary.textContent = `Your draft differs from the latest agent version. Choose which one to keep.`
+    if (!syncBannerDetails.hidden) {
+      syncBannerDetails.textContent = buildConflictDetails(currentMarkdown, pendingExternalMarkdown)
+    }
+  }
+
+  const applyEditorContent = (content: string, showDiff = false): void => {
+    applyingProgrammaticUpdate = true
+    setMarkdown(content, showDiff)
+    setTimeout(() => {
+      applyingProgrammaticUpdate = false
+    }, 0)
+  }
 
   const jumpToAgentChange = (change: AgentChangeEntry): void => {
     const editorEl = document.getElementById('editor')
@@ -252,6 +312,8 @@ async function init(): Promise<void> {
         agentChangeList.appendChild(item)
       }
     }
+
+    renderSyncBanner()
   }
 
   const resetAgentTimeline = (): void => {
@@ -260,6 +322,15 @@ async function init(): Promise<void> {
     agentUpdateCount = 0
     agentChangeId = 0
     agentChanges = []
+    renderAgentUI()
+  }
+
+  const adoptSyncedContent = (content: string, showDiff = false): void => {
+    currentMarkdown = content
+    lastSyncedMarkdown = content
+    pendingExternalMarkdown = null
+    updateSyncState()
+    applyEditorContent(content, showDiff)
     renderAgentUI()
   }
 
@@ -274,6 +345,27 @@ async function init(): Promise<void> {
   }, 30_000)
   renderAgentUI()
 
+  syncKeepMine?.addEventListener('click', () => {
+    pendingExternalMarkdown = null
+    updateSyncState()
+    renderAgentUI()
+  })
+
+  syncLoadAgent?.addEventListener('click', () => {
+    if (pendingExternalMarkdown === null) return
+    adoptSyncedContent(pendingExternalMarkdown, true)
+  })
+
+  syncReviewDiff?.addEventListener('click', () => {
+    if (!syncBannerDetails || !syncReviewDiff || pendingExternalMarkdown === null) return
+    const willOpen = syncBannerDetails.hidden
+    syncBannerDetails.hidden = !willOpen
+    syncReviewDiff.setAttribute('aria-expanded', String(willOpen))
+    if (willOpen) {
+      syncBannerDetails.textContent = buildConflictDetails(currentMarkdown, pendingExternalMarkdown)
+    }
+  })
+
   api.onAppError(({ message }) => {
     if (!editorReady) {
       pendingErrors.push(message)
@@ -284,12 +376,15 @@ async function init(): Promise<void> {
 
   api.onFileOpened((data) => {
     currentMarkdown = data.content
+    lastSyncedMarkdown = data.content
+    pendingExternalMarkdown = null
+    updateSyncState()
     if (!editorReady) {
       pendingOpenedContent = data.content
       return
     }
     resetAgentTimeline()
-    setMarkdown(data.content)
+    applyEditorContent(data.content)
   })
 
   // Restore custom theme CSS from disk
@@ -302,15 +397,21 @@ async function init(): Promise<void> {
   const editorModule = await import('./editor/editor')
   await editorModule.createEditor('editor', (markdown) => {
     currentMarkdown = markdown
+    if (!applyingProgrammaticUpdate) {
+      updateSyncState()
+      renderAgentUI()
+    }
   })
   getMarkdown = editorModule.getMarkdown
   getHTML = editorModule.getHTML
   setMarkdown = editorModule.setMarkdown
   editorReady = true
   currentMarkdown = getMarkdown()
+  lastSyncedMarkdown = currentMarkdown
+  updateSyncState()
 
   if (pendingOpenedContent !== null) {
-    setMarkdown(pendingOpenedContent)
+    applyEditorContent(pendingOpenedContent)
   }
   for (const message of pendingErrors) {
     showError(message)
@@ -320,13 +421,30 @@ async function init(): Promise<void> {
     const result = await api.openFile()
     if (result) {
       currentMarkdown = result.content
+      lastSyncedMarkdown = result.content
+      pendingExternalMarkdown = null
+      updateSyncState()
       resetAgentTimeline()
-      setMarkdown(result.content)
+      applyEditorContent(result.content)
     }
   })
 
-  api.onMenuSave(() => api.saveFile(currentMarkdown))
-  api.onMenuSaveAs(() => api.saveFileAs(currentMarkdown))
+  api.onMenuSave(async () => {
+    const ok = await api.saveFile(currentMarkdown)
+    if (!ok) return
+    lastSyncedMarkdown = currentMarkdown
+    pendingExternalMarkdown = null
+    updateSyncState()
+    renderAgentUI()
+  })
+  api.onMenuSaveAs(async () => {
+    const ok = await api.saveFileAs(currentMarkdown)
+    if (!ok) return
+    lastSyncedMarkdown = currentMarkdown
+    pendingExternalMarkdown = null
+    updateSyncState()
+    renderAgentUI()
+  })
   api.onMenuExportPDF(() => api.exportPDF())
 
   api.onMenuExportHTML(() => {
@@ -381,9 +499,12 @@ img{max-width:100%}
 
   api.onNewFile(() => {
     currentMarkdown = ''
+    lastSyncedMarkdown = ''
+    pendingExternalMarkdown = null
     pendingOpenedContent = null
+    updateSyncState()
     resetAgentTimeline()
-    setMarkdown('')
+    applyEditorContent('')
   })
 
   // file-changed: show diff highlight for agent changes
@@ -393,10 +514,10 @@ img{max-width:100%}
     const previousMarkdown = currentMarkdown
     const editorEl = document.getElementById('editor')
     const scrollTop = editorEl?.scrollTop ?? 0
-    currentMarkdown = content
     lastAgentUpdateAt = Date.now()
     agentUpdateCount += 1
-    const changeInfo = analyzeAgentChange(previousMarkdown, content)
+    const baseMarkdown = pendingExternalMarkdown ?? lastSyncedMarkdown
+    const changeInfo = analyzeAgentChange(baseMarkdown, content)
     agentChanges = [
       {
         id: ++agentChangeId,
@@ -406,8 +527,20 @@ img{max-width:100%}
       },
       ...agentChanges
     ].slice(0, MAX_AGENT_CHANGES)
+
+    if (syncState === 'dirty' || currentMarkdown !== lastSyncedMarkdown) {
+      pendingExternalMarkdown = content
+      updateSyncState()
+      renderAgentUI()
+      return
+    }
+
+    currentMarkdown = content
+    lastSyncedMarkdown = content
+    pendingExternalMarkdown = null
+    updateSyncState()
     renderAgentUI()
-    setMarkdown(content, true)
+    applyEditorContent(content, true)
     requestAnimationFrame(() => {
       if (editorEl) editorEl.scrollTop = scrollTop
     })
@@ -442,8 +575,11 @@ img{max-width:100%}
     const result = await api.openFilePath(filePath)
     if (result) {
       currentMarkdown = result.content
+      lastSyncedMarkdown = result.content
+      pendingExternalMarkdown = null
+      updateSyncState()
       resetAgentTimeline()
-      setMarkdown(result.content)
+      applyEditorContent(result.content)
     }
   })
 }

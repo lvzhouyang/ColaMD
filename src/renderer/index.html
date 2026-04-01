@@ -14,6 +14,18 @@
       <button id="agent-panel-toggle" type="button" aria-expanded="false">Recent Changes</button>
     </div>
   </div>
+  <section id="sync-banner" hidden>
+    <div id="sync-banner-copy">
+      <strong id="sync-banner-title">Agent updated this file while you were editing</strong>
+      <span id="sync-banner-summary">Choose which version to keep.</span>
+    </div>
+    <div id="sync-banner-actions">
+      <button id="sync-keep-mine" type="button">Keep Mine</button>
+      <button id="sync-load-agent" type="button">Load Agent Version</button>
+      <button id="sync-review-diff" type="button" aria-expanded="false">Review Diff</button>
+    </div>
+    <div id="sync-banner-details" hidden></div>
+  </section>
   <aside id="agent-panel" hidden>
     <div id="agent-panel-header">
       <strong>Recent Agent Changes</strong>

@@ -71,6 +71,65 @@ html, body {
   background: color-mix(in srgb, var(--bg-color) 96%, var(--text-color) 4%);
 }
 
+#sync-banner {
+  margin: 0 40px 16px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, #d97706 35%, var(--border-color) 65%);
+  border-radius: 12px;
+  background: color-mix(in srgb, #f59e0b 10%, var(--bg-color) 90%);
+}
+
+#sync-banner[hidden] {
+  display: none;
+}
+
+#sync-banner-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#sync-banner-title {
+  font-size: 14px;
+}
+
+#sync-banner-summary {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#sync-banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+#sync-banner-actions button {
+  border: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-color) 90%, var(--text-color) 10%);
+  color: var(--text-color);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#sync-banner-actions button:hover {
+  background: color-mix(in srgb, var(--bg-color) 82%, var(--text-color) 18%);
+}
+
+#sync-banner-details {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-color);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
 #agent-panel[hidden] {
   display: none;
 }
