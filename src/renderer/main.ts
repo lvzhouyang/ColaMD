@@ -1,4 +1,3 @@
-import { createEditor, getMarkdown, getHTML, setMarkdown } from './editor/editor'
 import { sanitizeHTMLFragment } from './editor/sanitize'
 import { applyTheme, loadSavedTheme } from './themes/theme-manager'
 import './themes/base.css'
@@ -26,14 +25,117 @@ function showError(message: string): void {
   }, 4200)
 }
 
+interface AgentChangeEntry {
+  id: number
+  summary: string
+  timestamp: number
+}
+
+const MAX_AGENT_CHANGES = 5
+
+function formatRelativeTime(timestamp: number): string {
+  const diffMs = Date.now() - timestamp
+  if (diffMs < 10_000) return 'just now'
+  const diffSec = Math.floor(diffMs / 1000)
+  if (diffSec < 60) return `${diffSec}s ago`
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin}m ago`
+  const diffHour = Math.floor(diffMin / 60)
+  if (diffHour < 24) return `${diffHour}h ago`
+  const diffDay = Math.floor(diffHour / 24)
+  return `${diffDay}d ago`
+}
+
+function summarizeAgentChange(previous: string, next: string): string {
+  const previousLines = previous.split('\n').map((line) => line.trim()).filter(Boolean)
+  const nextLines = next.split('\n').map((line) => line.trim()).filter(Boolean)
+  const added = nextLines.filter((line) => !previousLines.includes(line))
+  const removed = previousLines.filter((line) => !nextLines.includes(line))
+
+  if (added.length > 0) {
+    return `Updated: ${added[0].slice(0, 140)}`
+  }
+  if (removed.length > 0) {
+    return `Removed: ${removed[0].slice(0, 140)}`
+  }
+  return 'Agent updated the document structure.'
+}
+
 async function init(): Promise<void> {
   const api = window.electronAPI
   let currentMarkdown = ''
   let editorReady = false
   let pendingOpenedContent: string | null = null
   const pendingErrors: string[] = []
+  let getMarkdown = () => ''
+  let getHTML = () => ''
+  let setMarkdown = (_content: string, _showDiff?: boolean) => {}
+  let agentState: 'idle' | 'active' | 'cooldown' = 'idle'
+  let lastAgentUpdateAt: number | null = null
+  let agentUpdateCount = 0
+  let agentChangeId = 0
+  let agentChanges: AgentChangeEntry[] = []
   const savedTheme = loadSavedTheme()
   applyTheme(savedTheme)
+
+  const agentStatus = document.getElementById('agent-status')
+  const agentPanel = document.getElementById('agent-panel')
+  const agentPanelToggle = document.getElementById('agent-panel-toggle') as HTMLButtonElement | null
+  const agentSummary = document.getElementById('agent-summary')
+  const agentChangeList = document.getElementById('agent-change-list')
+
+  const renderAgentUI = (): void => {
+    if (agentStatus) {
+      if (agentState === 'active') {
+        agentStatus.textContent = 'Agent editing...'
+      } else if (lastAgentUpdateAt) {
+        agentStatus.textContent = `Updated ${formatRelativeTime(lastAgentUpdateAt)} • ${agentUpdateCount} sync${agentUpdateCount === 1 ? '' : 's'}`
+      } else {
+        agentStatus.textContent = 'Waiting for agent activity'
+      }
+    }
+
+    if (agentSummary) {
+      agentSummary.textContent = lastAgentUpdateAt
+        ? `Last update ${formatRelativeTime(lastAgentUpdateAt)}`
+        : 'No external updates yet'
+    }
+
+    if (agentChangeList) {
+      agentChangeList.innerHTML = ''
+      for (const change of agentChanges) {
+        const item = document.createElement('li')
+        const time = document.createElement('span')
+        time.className = 'agent-change-time'
+        time.textContent = formatRelativeTime(change.timestamp)
+        const summary = document.createElement('div')
+        summary.className = 'agent-change-summary'
+        summary.textContent = change.summary
+        item.append(time, summary)
+        agentChangeList.appendChild(item)
+      }
+    }
+  }
+
+  const resetAgentTimeline = (): void => {
+    agentState = 'idle'
+    lastAgentUpdateAt = null
+    agentUpdateCount = 0
+    agentChangeId = 0
+    agentChanges = []
+    renderAgentUI()
+  }
+
+  agentPanelToggle?.addEventListener('click', () => {
+    const open = agentPanel?.hidden ?? true
+    if (agentPanel) agentPanel.hidden = !open
+    if (agentPanelToggle) agentPanelToggle.setAttribute('aria-expanded', String(open))
+  })
+
+  setInterval(() => {
+    if (lastAgentUpdateAt && agentState !== 'active') renderAgentUI()
+  }, 30_000)
+  renderAgentUI()
 
   api.onAppError(({ message }) => {
     if (!editorReady) {
@@ -49,6 +151,7 @@ async function init(): Promise<void> {
       pendingOpenedContent = data.content
       return
     }
+    resetAgentTimeline()
     setMarkdown(data.content)
   })
 
@@ -59,9 +162,13 @@ async function init(): Promise<void> {
     if (css) applyTheme(savedTheme, css)
   }
 
-  await createEditor('editor', (markdown) => {
+  const editorModule = await import('./editor/editor')
+  await editorModule.createEditor('editor', (markdown) => {
     currentMarkdown = markdown
   })
+  getMarkdown = editorModule.getMarkdown
+  getHTML = editorModule.getHTML
+  setMarkdown = editorModule.setMarkdown
   editorReady = true
   currentMarkdown = getMarkdown()
 
@@ -76,6 +183,7 @@ async function init(): Promise<void> {
     const result = await api.openFile()
     if (result) {
       currentMarkdown = result.content
+      resetAgentTimeline()
       setMarkdown(result.content)
     }
   })
@@ -137,6 +245,7 @@ img{max-width:100%}
   api.onNewFile(() => {
     currentMarkdown = ''
     pendingOpenedContent = null
+    resetAgentTimeline()
     setMarkdown('')
   })
 
@@ -144,9 +253,21 @@ img{max-width:100%}
   api.onFileChanged((content) => {
     if (content === currentMarkdown) return
 
+    const previousMarkdown = currentMarkdown
     const editorEl = document.getElementById('editor')
     const scrollTop = editorEl?.scrollTop ?? 0
     currentMarkdown = content
+    lastAgentUpdateAt = Date.now()
+    agentUpdateCount += 1
+    agentChanges = [
+      {
+        id: ++agentChangeId,
+        summary: summarizeAgentChange(previousMarkdown, content),
+        timestamp: lastAgentUpdateAt
+      },
+      ...agentChanges
+    ].slice(0, MAX_AGENT_CHANGES)
+    renderAgentUI()
     setMarkdown(content, true)
     requestAnimationFrame(() => {
       if (editorEl) editorEl.scrollTop = scrollTop
@@ -166,6 +287,8 @@ img{max-width:100%}
 
   const agentDot = document.getElementById('agent-dot')
   api.onAgentActivity((state) => {
+    agentState = state as 'idle' | 'active' | 'cooldown'
+    renderAgentUI()
     if (agentDot) agentDot.className = state === 'idle' ? '' : state
   })
 
@@ -180,6 +303,7 @@ img{max-width:100%}
     const result = await api.openFilePath(filePath)
     if (result) {
       currentMarkdown = result.content
+      resetAgentTimeline()
       setMarkdown(result.content)
     }
   })

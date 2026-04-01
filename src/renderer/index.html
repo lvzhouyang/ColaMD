@@ -7,7 +7,20 @@
   <title>ColaMD</title>
 </head>
 <body>
-  <div id="titlebar"><div id="agent-dot"></div></div>
+  <div id="titlebar">
+    <div id="agent-meta">
+      <div id="agent-dot"></div>
+      <span id="agent-status">Waiting for agent activity</span>
+      <button id="agent-panel-toggle" type="button" aria-expanded="false">Recent Changes</button>
+    </div>
+  </div>
+  <aside id="agent-panel" hidden>
+    <div id="agent-panel-header">
+      <strong>Recent Agent Changes</strong>
+      <span id="agent-summary">No external updates yet</span>
+    </div>
+    <ol id="agent-change-list"></ol>
+  </aside>
   <div id="editor"></div>
   <script type="module" src="./main.ts"></script>
 </body>
