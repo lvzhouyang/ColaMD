@@ -119,7 +119,7 @@ export async function createEditor(
     .config((ctx) => {
       ctx.set(rootCtx, root)
       ctx.set(defaultValueCtx, defaultContent)
-      ctx.set(remarkPluginsCtx, [{ plugin: remarkBreaks, options: undefined }])
+      ctx.set(remarkPluginsCtx, [{ plugin: remarkBreaks, options: {} }])
       if (onChange) {
         ctx.get(listenerCtx).markdownUpdated((_ctx, markdown) => {
           onChange(markdown)

@@ -32,6 +32,30 @@ html, body {
   transition: background 0.3s ease, opacity 0.3s ease;
 }
 
+#error-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(120, 25, 25, 0.94);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 20;
+}
+
+#error-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 #agent-dot.active {
   background: #e8913a;
   opacity: 1;
@@ -315,5 +339,3 @@ body.theme-newsprint #editor .ProseMirror {
   background: var(--border-color);
   border-radius: 3px;
 }
-
- < /dev/null

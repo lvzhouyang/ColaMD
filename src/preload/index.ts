@@ -19,6 +19,7 @@ export interface ElectronAPI {
   loadThemeCSS: (fileName: string) => Promise<string | null>
   getPathForFile: (file: File) => string
   openExternal: (url: string) => void
+  onAppError: (callback: (payload: { message: string }) => void) => Unsubscribe
   onFileChanged: (callback: (content: string) => void) => Unsubscribe
   onNewFile: (callback: () => void) => Unsubscribe
   onFileOpened: (callback: (data: { path: string; content: string }) => void) => Unsubscribe
@@ -44,6 +45,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadThemeCSS: (fileName: string) => ipcRenderer.invoke('load-theme-css', fileName),
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   openExternal: (url: string) => ipcRenderer.send('open-external', url),
+  onAppError: (callback) => on('app-error', callback),
   onFileChanged: (callback) => on('file-changed', callback),
   onNewFile: (callback) => on('new-file', callback),
   onFileOpened: (callback) => on('file-opened', callback),

@@ -1,11 +1,56 @@
 import { createEditor, getMarkdown, getHTML, setMarkdown } from './editor/editor'
+import { sanitizeHTMLFragment } from './editor/sanitize'
 import { applyTheme, loadSavedTheme } from './themes/theme-manager'
 import './themes/base.css'
 
+function ensureErrorToast(): HTMLElement {
+  let toast = document.getElementById('error-toast')
+  if (!toast) {
+    toast = document.createElement('div')
+    toast.id = 'error-toast'
+    document.body.appendChild(toast)
+  }
+  return toast
+}
+
+let errorToastTimer: ReturnType<typeof setTimeout> | null = null
+
+function showError(message: string): void {
+  const toast = ensureErrorToast()
+  toast.textContent = message
+  toast.classList.add('visible')
+  if (errorToastTimer) clearTimeout(errorToastTimer)
+  errorToastTimer = setTimeout(() => {
+    toast.classList.remove('visible')
+    errorToastTimer = null
+  }, 4200)
+}
+
 async function init(): Promise<void> {
   const api = window.electronAPI
+  let currentMarkdown = ''
+  let editorReady = false
+  let pendingOpenedContent: string | null = null
+  const pendingErrors: string[] = []
   const savedTheme = loadSavedTheme()
   applyTheme(savedTheme)
+
+  api.onAppError(({ message }) => {
+    if (!editorReady) {
+      pendingErrors.push(message)
+      return
+    }
+    showError(message)
+  })
+
+  api.onFileOpened((data) => {
+    currentMarkdown = data.content
+    if (!editorReady) {
+      pendingOpenedContent = data.content
+      return
+    }
+    setMarkdown(data.content)
+  })
 
   // Restore custom theme CSS from disk
   if (savedTheme.startsWith('custom:')) {
@@ -14,15 +59,29 @@ async function init(): Promise<void> {
     if (css) applyTheme(savedTheme, css)
   }
 
-  await createEditor('editor')
+  await createEditor('editor', (markdown) => {
+    currentMarkdown = markdown
+  })
+  editorReady = true
+  currentMarkdown = getMarkdown()
+
+  if (pendingOpenedContent !== null) {
+    setMarkdown(pendingOpenedContent)
+  }
+  for (const message of pendingErrors) {
+    showError(message)
+  }
 
   api.onMenuOpen(async () => {
     const result = await api.openFile()
-    if (result) setMarkdown(result.content)
+    if (result) {
+      currentMarkdown = result.content
+      setMarkdown(result.content)
+    }
   })
 
-  api.onMenuSave(() => api.saveFile(getMarkdown()))
-  api.onMenuSaveAs(() => api.saveFileAs(getMarkdown()))
+  api.onMenuSave(() => api.saveFile(currentMarkdown))
+  api.onMenuSaveAs(() => api.saveFileAs(currentMarkdown))
   api.onMenuExportPDF(() => api.exportPDF())
 
   api.onMenuExportHTML(() => {
@@ -71,15 +130,28 @@ hr{border:none;border-top:2px solid ${borderColor};margin:2em 0}
 img{max-width:100%}
 ::selection{background:${selectionBg}}
 </style>
-</head><body>${getHTML()}</body></html>`
-    api.exportHTML(sanitizeExportHTML(html))
+</head><body>${sanitizeHTMLFragment(getHTML())}</body></html>`
+    api.exportHTML(html)
   })
 
-  api.onNewFile(() => setMarkdown(''))
-  api.onFileOpened((data) => setMarkdown(data.content))
+  api.onNewFile(() => {
+    currentMarkdown = ''
+    pendingOpenedContent = null
+    setMarkdown('')
+  })
 
   // file-changed: show diff highlight for agent changes
-  api.onFileChanged((content) => setMarkdown(content, true))
+  api.onFileChanged((content) => {
+    if (content === currentMarkdown) return
+
+    const editorEl = document.getElementById('editor')
+    const scrollTop = editorEl?.scrollTop ?? 0
+    currentMarkdown = content
+    setMarkdown(content, true)
+    requestAnimationFrame(() => {
+      if (editorEl) editorEl.scrollTop = scrollTop
+    })
+  })
 
   api.onSetTheme((theme) => applyTheme(theme))
   api.onSetCustomCSS((css) => {
@@ -106,20 +178,11 @@ img{max-width:100%}
     const filePath = api.getPathForFile(file)
     if (!filePath) return
     const result = await api.openFilePath(filePath)
-    if (result) setMarkdown(result.content)
+    if (result) {
+      currentMarkdown = result.content
+      setMarkdown(result.content)
+    }
   })
-}
-
-// HTML export sanitization: remove dangerous tags
-const DANGEROUS_TAGS = /<(script|iframe|object|embed|form|input|button|textarea|select|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi
-const DANGEROUS_OPEN = /<(script|iframe|object|embed|form|input|button|textarea|select|style)\b[^>]*\/?>\s*/gi
-const DANGEROUS_ATTRS = /\s+on\w+\s*=\s*("[^"]*"|'[^']*'|\S+)/gi
-
-function sanitizeExportHTML(html: string): string {
-  return html
-    .replace(DANGEROUS_TAGS, '')
-    .replace(DANGEROUS_OPEN, '')
-    .replace(DANGEROUS_ATTRS, '')
 }
 
 init().catch((e) => console.error('ColaMD init failed:', e))
